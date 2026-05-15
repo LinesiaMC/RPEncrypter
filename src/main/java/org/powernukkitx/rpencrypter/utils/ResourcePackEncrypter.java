@@ -36,13 +36,17 @@ public final class ResourcePackEncrypter {
         this.logger = logger;
     }
 
-    public int encryptAllInDirectory(File directory, String encryptionKey) {
-        if (!directory.isDirectory()) {
-            logger.warning("resource_packs directory not found: " + directory.getAbsolutePath());
+    public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey) {
+        if (!sourceDirectory.isDirectory()) {
+            logger.warning("source directory not found: " + sourceDirectory.getAbsolutePath());
             return 0;
         }
 
-        File[] files = directory.listFiles();
+        if (!outputDirectory.exists()) {
+            outputDirectory.mkdirs();
+        }
+
+        File[] files = sourceDirectory.listFiles();
         if (files == null) {
             return 0;
         }
@@ -57,12 +61,13 @@ public final class ResourcePackEncrypter {
             if (!(lower.endsWith(".zip") || lower.endsWith(".mcpack"))) {
                 continue;
             }
-            if (new File(file.getAbsolutePath() + ".key").isFile()) {
+            File outputFile = new File(outputDirectory, file.getName());
+            if (new File(outputFile.getAbsolutePath() + ".key").isFile()) {
                 continue;
             }
 
             try {
-                if (encryptPack(file, encryptionKey)) {
+                if (encryptPack(file, outputFile, encryptionKey)) {
                     updated++;
                 }
             } catch (Exception e) {
@@ -73,64 +78,67 @@ public final class ResourcePackEncrypter {
         return updated;
     }
 
-    private boolean encryptPack(File packFile, String encryptionKey) throws Exception {
+    private boolean encryptPack(File packFile, File outputFile, String encryptionKey) throws Exception {
         Path tempOutput = Files.createTempFile("rpencrypter-pnx-", ".zip");
-        byte[] packKeyBytes = encryptionKey.getBytes(StandardCharsets.UTF_8);
+        try {
+            byte[] packKeyBytes = encryptionKey.getBytes(StandardCharsets.UTF_8);
 
-        try (ZipFile zipFile = new ZipFile(packFile);
-             ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(tempOutput))) {
+            try (ZipFile zipFile = new ZipFile(packFile);
+                 ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(tempOutput))) {
 
-            List<PathKeyEntry> pathKeyList = new ArrayList<>();
-            String packUuid = null;
+                List<PathKeyEntry> pathKeyList = new ArrayList<>();
+                String packUuid = null;
 
-            var entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.isDirectory()) {
-                    continue;
+                var entries = zipFile.entries();
+                while (entries.hasMoreElements()) {
+                    ZipEntry entry = entries.nextElement();
+                    if (entry.isDirectory()) {
+                        continue;
+                    }
+
+                    String relativePath = entry.getName();
+                    byte[] contents;
+                    try (var input = zipFile.getInputStream(entry)) {
+                        contents = input.readAllBytes();
+                    }
+                    String leaf = Path.of(relativePath).getFileName().toString();
+
+                    if (MANIFEST_FILE.equals(leaf)) {
+                        packUuid = readPackUuid(contents);
+                    }
+
+                    byte[] outputBytes;
+                    if (SKIP_ENCRYPTION.contains(leaf)) {
+                        outputBytes = contents;
+                    } else {
+                        String fileKey = md5Hex(concat(relativePath.getBytes(StandardCharsets.UTF_8), contents));
+                        byte[] fileKeyBytes = fileKey.getBytes(StandardCharsets.UTF_8);
+                        outputBytes = aes256Cfb8Encrypt(contents, fileKeyBytes, slice16(fileKeyBytes));
+                        pathKeyList.add(new PathKeyEntry(relativePath, fileKey));
+                    }
+
+                    writeZipEntry(output, relativePath, outputBytes);
                 }
 
-                String relativePath = entry.getName();
-                byte[] contents;
-                try (var input = zipFile.getInputStream(entry)) {
-                    contents = input.readAllBytes();
-                }
-                String leaf = Path.of(relativePath).getFileName().toString();
-
-                if (MANIFEST_FILE.equals(leaf)) {
-                    packUuid = readPackUuid(contents);
+                if (packUuid == null || packUuid.length() != 36) {
+                    throw new IllegalArgumentException("manifest.json missing or invalid UUID in " + packFile.getName());
                 }
 
-                byte[] outputBytes;
-                if (SKIP_ENCRYPTION.contains(leaf)) {
-                    outputBytes = contents;
-                } else {
-                    String fileKey = md5Hex(concat(relativePath.getBytes(StandardCharsets.UTF_8), contents));
-                    byte[] fileKeyBytes = fileKey.getBytes(StandardCharsets.UTF_8);
-                    outputBytes = aes256Cfb8Encrypt(contents, fileKeyBytes, slice16(fileKeyBytes));
-                    pathKeyList.add(new PathKeyEntry(relativePath, fileKey));
-                }
-
-                writeZipEntry(output, relativePath, outputBytes);
+                String contentsJson = gson.toJson(new ContentsJson(pathKeyList));
+                byte[] encryptedContentsJson = aes256Cfb8Encrypt(
+                        contentsJson.getBytes(StandardCharsets.UTF_8),
+                        packKeyBytes,
+                        slice16(packKeyBytes)
+                );
+                writeZipEntry(output, "contents.json", buildContentsFile(packUuid, encryptedContentsJson));
             }
 
-            if (packUuid == null || packUuid.length() != 36) {
-                throw new IllegalArgumentException("manifest.json missing or invalid UUID in " + packFile.getName());
-            }
-
-            String contentsJson = gson.toJson(new ContentsJson(pathKeyList));
-            byte[] encryptedContentsJson = aes256Cfb8Encrypt(
-                    contentsJson.getBytes(StandardCharsets.UTF_8),
-                    packKeyBytes,
-                    slice16(packKeyBytes)
-            );
-            writeZipEntry(output, "contents.json", buildContentsFile(packUuid, encryptedContentsJson));
+            Files.move(tempOutput, outputFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            Files.writeString(Path.of(outputFile.getAbsolutePath() + ".key"), encryptionKey, StandardCharsets.UTF_8);
+            return true;
+        } finally {
+            Files.deleteIfExists(tempOutput);
         }
-
-        Files.move(tempOutput, packFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        Files.writeString(Path.of(packFile.getAbsolutePath() + ".key"), encryptionKey, StandardCharsets.UTF_8);
-        logger.info("Encrypted resource pack: " + packFile.getName());
-        return true;
     }
 
     private static String readPackUuid(byte[] manifestBytes) {
