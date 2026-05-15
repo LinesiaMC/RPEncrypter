@@ -1,0 +1,4 @@
+auto-encrypt-packs: true
+# Must be exactly 32 characters.
+# Leave empty to auto-generate on first startup.
+encryption-key: ""
