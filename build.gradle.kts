@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.powernukkitx.rpencrypter"
-version = "1.0.0"
+version = "1.0.1"
 
 repositories {
     mavenCentral()
@@ -14,7 +14,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("org.powernukkitx:server:2.0.0-SNAPSHOT")
+    compileOnly("org.powernukkitx:server:nightly-SNAPSHOT")
 }
 
 tasks.jar {

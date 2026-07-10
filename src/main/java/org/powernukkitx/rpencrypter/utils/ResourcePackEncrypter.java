@@ -1,6 +1,6 @@
 package org.powernukkitx.rpencrypter.utils;
 
-import cn.nukkit.plugin.PluginLogger;
+import org.powernukkitx.plugin.PluginLogger;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;

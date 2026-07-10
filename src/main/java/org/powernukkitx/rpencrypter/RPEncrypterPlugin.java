@@ -1,14 +1,14 @@
 package org.powernukkitx.rpencrypter;
 
-import cn.nukkit.Nukkit;
-import cn.nukkit.plugin.PluginBase;
-import cn.nukkit.scheduler.PluginTask;
-import cn.nukkit.utils.Config;
+import org.powernukkitx.PowerNukkitX;
+import org.powernukkitx.plugin.PluginBase;
+import org.powernukkitx.scheduler.PluginTask;
+import org.powernukkitx.utils.Config;
 import org.powernukkitx.rpencrypter.utils.ResourcePackEncrypter;
 
-import cn.nukkit.resourcepacks.ResourcePack;
-import cn.nukkit.resourcepacks.ResourcePackManager;
-import cn.nukkit.resourcepacks.ZippedResourcePack;
+import org.powernukkitx.resourcepacks.ResourcePack;
+import org.powernukkitx.resourcepacks.ResourcePackManager;
+import org.powernukkitx.resourcepacks.ZippedResourcePack;
 
 import java.io.File;
 import java.lang.reflect.Field;
@@ -64,7 +64,7 @@ public final class RPEncrypterPlugin extends PluginBase {
     }
 
     private void encryptLoadedPacks() {
-        File resourcePacksDir = new File(Nukkit.DATA_PATH, "resource_packs");
+        File resourcePacksDir = new File(PowerNukkitX.DATA_PATH, "resource_packs");
         File outputDir = new File(this.getDataFolder(), "encrypted_packs");
         
         this.clearOutputDir(outputDir);
