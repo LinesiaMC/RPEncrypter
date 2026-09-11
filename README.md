@@ -8,6 +8,21 @@ Resource pack encryptor for PowerNukkitX
 - Auto encrypts resource packs
 - You can put keys into config.yml
 - No effort for .key files
+- Any pack can be kept unencrypted through `excluded-packs`
+
+---
+
+## Configuration
+
+```yaml
+auto-encrypt-packs: true
+# Must be exactly 32 characters. Leave empty to auto-generate on first startup.
+encryption-key: ""
+# Packs that must stay readable: served as-is, without encryption.
+# File names from the resource_packs folder, case-insensitive, extension optional.
+excluded-packs:
+  - MyPublicPack.zip
+```
 
 ---
 

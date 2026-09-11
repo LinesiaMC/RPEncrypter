@@ -17,9 +17,11 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -28,6 +30,7 @@ import java.util.zip.ZipOutputStream;
 public final class ResourcePackEncrypter {
     private static final String MANIFEST_FILE = "manifest.json";
     private static final Set<String> SKIP_ENCRYPTION = new HashSet<>(Set.of(MANIFEST_FILE, "pack_icon.png"));
+    private static final LocalDateTime FIXED_ENTRY_TIME = LocalDateTime.of(2000, 1, 1, 0, 0, 0);
 
     private final PluginLogger logger;
     private final Gson gson = new Gson();
@@ -36,7 +39,7 @@ public final class ResourcePackEncrypter {
         this.logger = logger;
     }
 
-    public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey) {
+    public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey, Set<String> excludedPacks) {
         if (!sourceDirectory.isDirectory()) {
             logger.warning("source directory not found: " + sourceDirectory.getAbsolutePath());
             return 0;
@@ -57,14 +60,15 @@ public final class ResourcePackEncrypter {
                 continue;
             }
 
-            String lower = file.getName().toLowerCase();
+            String lower = file.getName().toLowerCase(Locale.ROOT);
             if (!(lower.endsWith(".zip") || lower.endsWith(".mcpack"))) {
                 continue;
             }
-            File outputFile = new File(outputDirectory, file.getName());
-            if (new File(outputFile.getAbsolutePath() + ".key").isFile()) {
+            if (excludedPacks.contains(stripExtension(lower))) {
+                logger.info("Pack excluded from encryption: " + file.getName());
                 continue;
             }
+            File outputFile = new File(outputDirectory, file.getName());
 
             try {
                 if (encryptPack(file, outputFile, encryptionKey)) {
@@ -76,6 +80,11 @@ public final class ResourcePackEncrypter {
         }
 
         return updated;
+    }
+
+    private static String stripExtension(String lowerCaseName) {
+        int dot = lowerCaseName.lastIndexOf('.');
+        return dot < 0 ? lowerCaseName : lowerCaseName.substring(0, dot);
     }
 
     private boolean encryptPack(File packFile, File outputFile, String encryptionKey) throws Exception {
@@ -171,6 +180,9 @@ public final class ResourcePackEncrypter {
 
     private static void writeZipEntry(ZipOutputStream output, String path, byte[] data) throws IOException {
         ZipEntry outEntry = new ZipEntry(path);
+        // Packs are re-encrypted at every startup: a fixed entry date keeps the output byte-identical,
+        // so the SHA-256 doesn't move and clients don't re-download the whole pack after each restart.
+        outEntry.setTimeLocal(FIXED_ENTRY_TIME);
         output.putNextEntry(outEntry);
         output.write(data);
         output.closeEntry();
