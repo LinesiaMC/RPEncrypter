@@ -31,6 +31,7 @@ public final class RPEncrypterPlugin extends PluginBase {
     private ResourcePackEncrypter encrypter;
     private String encryptionKey;
     private Set<String> excludedPacks;
+    private boolean minifyJson;
 
     @Override
     public void onLoad() {
@@ -43,6 +44,7 @@ public final class RPEncrypterPlugin extends PluginBase {
 
         this.encryptionKey = resolveEncryptionKey(this.getConfig());
         this.excludedPacks = resolveExcludedPacks(this.getConfig());
+        this.minifyJson = this.getConfig().getBoolean("minify-json", true);
         if (this.getConfig().getBoolean("auto-encrypt-packs", true)) {
             this.getServer().getScheduler().scheduleDelayedTask(new EncryptTask(this), 1);
         }
@@ -113,7 +115,8 @@ public final class RPEncrypterPlugin extends PluginBase {
         File outputDir = new File(this.getDataFolder(), "encrypted_packs");
 
         this.clearOutputDir(outputDir);
-        int updated = this.encrypter.encryptAllInDirectory(resourcePacksDir, outputDir, this.encryptionKey, this.excludedPacks);
+        int updated = this.encrypter.encryptAllInDirectory(resourcePacksDir, outputDir, this.encryptionKey,
+                this.excludedPacks, this.minifyJson);
 
         this.swapWithEncryptedPacks();
         this.getLogger().debug("Encryption finished. Encrypted/updated packs: " + updated);

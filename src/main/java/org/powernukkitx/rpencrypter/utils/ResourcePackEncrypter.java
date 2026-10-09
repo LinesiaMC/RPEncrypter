@@ -34,12 +34,19 @@ public final class ResourcePackEncrypter {
 
     private final PluginLogger logger;
     private final Gson gson = new Gson();
+    private long jsonBytesBefore;
+    private long jsonBytesAfter;
 
     public ResourcePackEncrypter(PluginLogger logger) {
         this.logger = logger;
     }
 
-    public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey, Set<String> excludedPacks) {
+    /**
+     * @param minifyJson strip indentation and comments from the JSON files before encrypting them:
+     *                   encrypted bytes no longer compress, so the indentation would be downloaded as is
+     */
+    public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey,
+                                     Set<String> excludedPacks, boolean minifyJson) {
         if (!sourceDirectory.isDirectory()) {
             logger.warning("source directory not found: " + sourceDirectory.getAbsolutePath());
             return 0;
@@ -55,6 +62,8 @@ public final class ResourcePackEncrypter {
         }
 
         int updated = 0;
+        jsonBytesBefore = 0;
+        jsonBytesAfter = 0;
         for (File file : files) {
             if (!file.isFile()) {
                 continue;
@@ -71,7 +80,7 @@ public final class ResourcePackEncrypter {
             File outputFile = new File(outputDirectory, file.getName());
 
             try {
-                if (encryptPack(file, outputFile, encryptionKey)) {
+                if (encryptPack(file, outputFile, encryptionKey, minifyJson)) {
                     updated++;
                 }
             } catch (Exception e) {
@@ -79,6 +88,10 @@ public final class ResourcePackEncrypter {
             }
         }
 
+        if (minifyJson && jsonBytesBefore > 0) {
+            logger.info(String.format(Locale.ROOT, "JSON minified before encryption: %.1f MB -> %.1f MB",
+                    jsonBytesBefore / 1e6, jsonBytesAfter / 1e6));
+        }
         return updated;
     }
 
@@ -87,7 +100,7 @@ public final class ResourcePackEncrypter {
         return dot < 0 ? lowerCaseName : lowerCaseName.substring(0, dot);
     }
 
-    private boolean encryptPack(File packFile, File outputFile, String encryptionKey) throws Exception {
+    private boolean encryptPack(File packFile, File outputFile, String encryptionKey, boolean minifyJson) throws Exception {
         Path tempOutput = Files.createTempFile("rpencrypter-pnx-", ".zip");
         try {
             byte[] packKeyBytes = encryptionKey.getBytes(StandardCharsets.UTF_8);
@@ -114,6 +127,10 @@ public final class ResourcePackEncrypter {
 
                     if (MANIFEST_FILE.equals(leaf)) {
                         packUuid = readPackUuid(contents);
+                    } else if (minifyJson && leaf.toLowerCase(Locale.ROOT).endsWith(".json")) {
+                        jsonBytesBefore += contents.length;
+                        contents = JsonMinifier.minify(contents);
+                        jsonBytesAfter += contents.length;
                     }
 
                     byte[] outputBytes;

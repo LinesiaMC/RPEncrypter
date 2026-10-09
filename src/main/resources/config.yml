@@ -10,3 +10,6 @@ encryption-key: ""
 #   - LinesiaPackUI.zip
 #   - LinesiaEntity
 excluded-packs: []
+# Strip indentation and comments from the JSON files of the encrypted packs.
+# Encrypted files no longer compress: without this, every indentation byte is downloaded.
+minify-json: true
