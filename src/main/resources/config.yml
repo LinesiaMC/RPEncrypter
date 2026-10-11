@@ -25,3 +25,10 @@ optimize-png: true
 #     - EventPackOne
 #     - EventPackTwo
 merged-packs: {}
+# Paths left out of the encrypted packs (prefixes): files a pack carries for the server or for its
+# tools, which the game never reads but would still download. Hidden files are always left out.
+# Example:
+# strip-paths:
+#   - server_assets/
+#   - README.md
+strip-paths: []

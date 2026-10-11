@@ -52,6 +52,7 @@ public final class RPEncrypterPlugin extends PluginBase {
         this.encryptionKey = resolveEncryptionKey(this.getConfig());
         this.excludedPacks = resolveExcludedPacks(this.getConfig());
         this.minifyJson = this.getConfig().getBoolean("minify-json", true);
+        this.encrypter.setStripPaths(this.getConfig().getStringList("strip-paths"));
         this.optimizePng = this.getConfig().getBoolean("optimize-png", true);
         this.mergedPacks = resolveMergedPacks(this.getConfig());
         if (this.getConfig().getBoolean("auto-encrypt-packs", true)) {

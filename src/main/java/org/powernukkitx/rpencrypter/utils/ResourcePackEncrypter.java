@@ -36,9 +36,31 @@ public final class ResourcePackEncrypter {
     private static final LocalDateTime FIXED_ENTRY_TIME = LocalDateTime.of(2000, 1, 1, 0, 0, 0);
 
     private final PluginLogger logger;
+    private List<String> stripPaths = List.of();
+    private int strippedFiles;
+    private long strippedBytes;
     private final Gson gson = new Gson();
     private long jsonBytesBefore;
     private long jsonBytesAfter;
+
+    /**
+     * Paths left out of the encrypted packs (prefixes, e.g. {@code cosmetic/}): files a pack carries
+     * for the server or its tools, which the game never reads but would still download.
+     * Hidden files ({@code .git}…) are always left out.
+     */
+    public void setStripPaths(List<String> stripPaths) {
+        this.stripPaths = List.copyOf(stripPaths);
+    }
+
+    private boolean isStripped(String path) {
+        for (String part : path.split("/")) {
+            if (part.startsWith(".")) return true;
+        }
+        for (String prefix : stripPaths) {
+            if (path.startsWith(prefix)) return true;
+        }
+        return false;
+    }
 
     public ResourcePackEncrypter(PluginLogger logger) {
         this.logger = logger;
@@ -60,6 +82,8 @@ public final class ResourcePackEncrypter {
         int updated = 0;
         jsonBytesBefore = 0;
         jsonBytesAfter = 0;
+        strippedFiles = 0;
+        strippedBytes = 0;
         for (File file : packs) {
             if (!file.isFile()) {
                 continue;
@@ -91,6 +115,10 @@ public final class ResourcePackEncrypter {
         if (pngCache != null && !pngCache.isEmpty()) {
             logger.info(pngCache.summary());
         }
+        if (strippedFiles > 0) {
+            logger.info(String.format(Locale.ROOT, "Files the game never reads left out: %d (%.1f MB)",
+                    strippedFiles, strippedBytes / 1e6));
+        }
         return updated;
     }
 
@@ -119,6 +147,11 @@ public final class ResourcePackEncrypter {
                     }
 
                     String relativePath = entry.getName();
+                    if (isStripped(relativePath)) {
+                        strippedFiles++;
+                        strippedBytes += Math.max(0, entry.getSize());
+                        continue;
+                    }
                     byte[] contents;
                     try (var input = zipFile.getInputStream(entry)) {
                         contents = input.readAllBytes();
