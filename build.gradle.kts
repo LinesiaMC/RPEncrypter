@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "org.powernukkitx.rpencrypter"
-version = "1.4.1"
+version = "1.6.0"
 
 repositories {
     mavenCentral()

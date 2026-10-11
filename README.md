@@ -13,6 +13,8 @@ Resource pack encryptor for PowerNukkitX
 - Packs are encrypted before the server opens its network: the plain packs are never served
 - Several packs can be sent as one (`merged-packs`): fewer packs for the client to download and load
 - Files the game never reads can be left out of the encrypted packs (`strip-paths`)
+- Dull sounds re-encoded at 22.05 kHz with ffmpeg (`optimize-ogg`), excluded packs lightened too (`optimize-excluded-packs`)
+- JSON UI files factored into templates and variables (`compress-ui`), checked by expanding them back
 
 ---
 
@@ -30,6 +32,12 @@ excluded-packs:
 minify-json: true
 # Re-encode the PNG files of the encrypted packs in their smallest form, pixel for pixel identical.
 optimize-png: true
+# Re-encode at 22.05 kHz the sounds with nothing above 11 kHz (needs ffmpeg with libvorbis).
+optimize-ogg: true
+# Also lighten the excluded packs, still sent in clear.
+optimize-excluded-packs: true
+# Factor the JSON UI files into templates and variables.
+compress-ui: true
 # Paths left out of the encrypted packs (prefixes), for files the game never reads.
 strip-paths:
   - server_assets/

@@ -4,8 +4,10 @@ import org.powernukkitx.PowerNukkitX;
 import org.powernukkitx.plugin.PluginBase;
 import org.powernukkitx.utils.Config;
 import org.powernukkitx.utils.ConfigSection;
+import org.powernukkitx.rpencrypter.utils.AssetCache;
+import org.powernukkitx.rpencrypter.utils.OggOptimizer;
 import org.powernukkitx.rpencrypter.utils.PackMerger;
-import org.powernukkitx.rpencrypter.utils.PngCache;
+import org.powernukkitx.rpencrypter.utils.PngOptimizer;
 import org.powernukkitx.rpencrypter.utils.ResourcePackEncrypter;
 
 import org.powernukkitx.resourcepacks.ResourcePack;
@@ -38,6 +40,9 @@ public final class RPEncrypterPlugin extends PluginBase {
     private Set<String> excludedPacks;
     private boolean minifyJson;
     private boolean optimizePng;
+    private boolean optimizeOgg;
+    private boolean optimizeExcluded;
+    private String ffmpeg;
     private Map<String, List<String>> mergedPacks;
 
     @Override
@@ -53,7 +58,11 @@ public final class RPEncrypterPlugin extends PluginBase {
         this.excludedPacks = resolveExcludedPacks(this.getConfig());
         this.minifyJson = this.getConfig().getBoolean("minify-json", true);
         this.encrypter.setStripPaths(this.getConfig().getStringList("strip-paths"));
+        this.encrypter.setCompressUi(this.getConfig().getBoolean("compress-ui", false));
         this.optimizePng = this.getConfig().getBoolean("optimize-png", true);
+        this.optimizeOgg = this.getConfig().getBoolean("optimize-ogg", false);
+        this.ffmpeg = this.getConfig().getString("ffmpeg", "ffmpeg");
+        this.optimizeExcluded = this.getConfig().getBoolean("optimize-excluded-packs", false);
         this.mergedPacks = resolveMergedPacks(this.getConfig());
         if (this.getConfig().getBoolean("auto-encrypt-packs", true)) {
             // Right away, not on the first tick: plugins are enabled before the server opens its
@@ -169,12 +178,19 @@ public final class RPEncrypterPlugin extends PluginBase {
         int updated;
         // A quarter of the cores at most: the other servers of the machine keep running meanwhile.
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 4));
-        try (PngCache pngCache = this.optimizePng ? new PngCache(new File(this.getDataFolder(), "cache/png-v1"), threads) : null) {
-            updated = this.encrypter.encryptAll(packs, outputDir, this.encryptionKey,
-                    this.excludedPacks, this.minifyJson, pngCache);
-            if (pngCache != null) {
-                pngCache.prune();
-            }
+        OggOptimizer oggOptimizer = new OggOptimizer(this.ffmpeg);
+        File cache = new File(this.getDataFolder(), "cache");
+        try (AssetCache pngCache = this.optimizePng ? new AssetCache(new File(cache, "png-v1"), threads, "PNG", ".png",
+                     PngOptimizer::optimize, AssetCache::isCompletePng) : null;
+             AssetCache oggCache = this.optimizeOgg ? new AssetCache(new File(cache, "ogg-v1"), threads, "OGG", ".ogg",
+                     oggOptimizer::optimize, AssetCache::isCompleteOgg) : null) {
+            updated = this.encrypter.encryptAll(packs, outputDir, this.encryptionKey, this.excludedPacks,
+                    this.optimizeExcluded, this.minifyJson, pngCache, oggCache);
+            if (pngCache != null) pngCache.prune();
+            if (oggCache != null && oggOptimizer.isAvailable()) oggCache.prune();
+        }
+        if (this.optimizeOgg && !oggOptimizer.isAvailable()) {
+            this.getLogger().warning("optimize-ogg: ffmpeg not found (" + this.ffmpeg + "), sounds left as they are");
         }
 
         this.swapPacks(merges);
@@ -276,7 +292,7 @@ public final class RPEncrypterPlugin extends PluginBase {
             List<ResourcePack> stack = new ArrayList<>(packs);
             List<ResourcePack> next = new ArrayList<>();
             Set<Merge> placed = new HashSet<>();
-            int encrypted = 0, folded = 0;
+            int replaced = 0, folded = 0;
             for (ResourcePack original : stack) {
                 Merge merge = mergeOf.get(original.getPackId());
                 ResourcePack pack;
@@ -284,10 +300,10 @@ public final class RPEncrypterPlugin extends PluginBase {
                     folded++;
                     if (!placed.add(merge)) continue;
                     pack = encryptedById.getOrDefault(merge.result().uuid(), merge.plain());
-                    if (pack != merge.plain()) encrypted++;
+                    if (pack != merge.plain()) replaced++;
                 } else {
                     pack = encryptedById.getOrDefault(original.getPackId(), original);
-                    if (pack != original) encrypted++;
+                    if (pack != original) replaced++;
                 }
                 next.add(pack);
             }
@@ -299,8 +315,10 @@ public final class RPEncrypterPlugin extends PluginBase {
                 packsById.put(pack.getPackId(), pack);
             }
 
-            this.getLogger().info("Resource packs swapped: " + next.size() + " sent (" + encrypted + " encrypted"
-                    + (folded > 0 ? ", " + folded + " merged into " + placed.size() : "") + "), " + stack.size() + " loaded");
+            long encrypted = next.stream().filter(p -> p.getEncryptionKey() != null && !p.getEncryptionKey().isEmpty()).count();
+            this.getLogger().info("Resource packs swapped: " + next.size() + " sent (" + encrypted + " encrypted, "
+                    + replaced + " rebuilt" + (folded > 0 ? ", " + folded + " merged into " + placed.size() : "")
+                    + "), " + stack.size() + " loaded");
         } catch (Exception e) {
             this.getLogger().error("Failed to swap resource packs", e);
         }

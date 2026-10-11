@@ -32,3 +32,13 @@ merged-packs: {}
 #   - server_assets/
 #   - README.md
 strip-paths: []
+# Re-encode at 22.05 kHz the sounds of the packs that have nothing above 11 kHz (same sound to the
+# ear, far fewer bytes). Needs ffmpeg with libvorbis; loops and sounds over 10 s are left alone.
+optimize-ogg: false
+ffmpeg: ffmpeg
+# Also lighten the excluded packs (minified JSON, re-encoded PNG and sounds), still sent in clear.
+optimize-excluded-packs: false
+# Shrink the JSON UI files of the encrypted packs with the game's own templates and variables:
+# controls of the same shape share one template, each keeps only its own values. Every file is
+# expanded back and compared with the original before being kept.
+compress-ui: false
