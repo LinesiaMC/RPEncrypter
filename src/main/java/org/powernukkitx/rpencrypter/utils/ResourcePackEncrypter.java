@@ -23,6 +23,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -42,11 +45,14 @@ public final class ResourcePackEncrypter {
     }
 
     /**
-     * @param minifyJson strip indentation and comments from the JSON files before encrypting them:
-     *                   encrypted bytes no longer compress, so the indentation would be downloaded as is
+     * Encrypted bytes no longer compress: every file of an encrypted pack is downloaded exactly as
+     * heavy as it is written. Both options make the files lighter before they are encrypted.
+     *
+     * @param minifyJson strip indentation and comments from the JSON files
+     * @param pngCache   re-encodes the PNGs without loss, or {@code null} to keep them as they are
      */
     public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey,
-                                     Set<String> excludedPacks, boolean minifyJson) {
+                                     Set<String> excludedPacks, boolean minifyJson, PngCache pngCache) {
         if (!sourceDirectory.isDirectory()) {
             logger.warning("source directory not found: " + sourceDirectory.getAbsolutePath());
             return 0;
@@ -80,7 +86,7 @@ public final class ResourcePackEncrypter {
             File outputFile = new File(outputDirectory, file.getName());
 
             try {
-                if (encryptPack(file, outputFile, encryptionKey, minifyJson)) {
+                if (encryptPack(file, outputFile, encryptionKey, minifyJson, pngCache)) {
                     updated++;
                 }
             } catch (Exception e) {
@@ -92,6 +98,9 @@ public final class ResourcePackEncrypter {
             logger.info(String.format(Locale.ROOT, "JSON minified before encryption: %.1f MB -> %.1f MB",
                     jsonBytesBefore / 1e6, jsonBytesAfter / 1e6));
         }
+        if (pngCache != null && !pngCache.isEmpty()) {
+            logger.info(pngCache.summary());
+        }
         return updated;
     }
 
@@ -100,17 +109,18 @@ public final class ResourcePackEncrypter {
         return dot < 0 ? lowerCaseName : lowerCaseName.substring(0, dot);
     }
 
-    private boolean encryptPack(File packFile, File outputFile, String encryptionKey, boolean minifyJson) throws Exception {
+    private record PackFile(String path, String leaf, byte[] contents, Future<byte[]> png) {}
+
+    private boolean encryptPack(File packFile, File outputFile, String encryptionKey, boolean minifyJson,
+                                PngCache pngCache) throws Exception {
         Path tempOutput = Files.createTempFile("rpencrypter-pnx-", ".zip");
         try {
             byte[] packKeyBytes = encryptionKey.getBytes(StandardCharsets.UTF_8);
 
-            try (ZipFile zipFile = new ZipFile(packFile);
-                 ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(tempOutput))) {
-
-                List<PathKeyEntry> pathKeyList = new ArrayList<>();
-                String packUuid = null;
-
+            // Read first, so that the images are re-encoded on several threads while the rest waits.
+            List<PackFile> files = new ArrayList<>();
+            String packUuid = null;
+            try (ZipFile zipFile = new ZipFile(packFile)) {
                 var entries = zipFile.entries();
                 while (entries.hasMoreElements()) {
                     ZipEntry entry = entries.nextElement();
@@ -124,30 +134,49 @@ public final class ResourcePackEncrypter {
                         contents = input.readAllBytes();
                     }
                     String leaf = Path.of(relativePath).getFileName().toString();
+                    String lowerLeaf = leaf.toLowerCase(Locale.ROOT);
 
+                    Future<byte[]> png = null;
                     if (MANIFEST_FILE.equals(leaf)) {
                         packUuid = readPackUuid(contents);
-                    } else if (minifyJson && leaf.toLowerCase(Locale.ROOT).endsWith(".json")) {
+                    } else if (minifyJson && lowerLeaf.endsWith(".json")) {
                         jsonBytesBefore += contents.length;
                         contents = JsonMinifier.minify(contents);
                         jsonBytesAfter += contents.length;
+                    } else if (pngCache != null && lowerLeaf.endsWith(".png")) {
+                        png = pngCache.submit(contents);
+                    }
+                    files.add(new PackFile(relativePath, leaf, contents, png));
+                }
+            }
+
+            if (packUuid == null || packUuid.length() != 36) {
+                throw new IllegalArgumentException("manifest.json missing or invalid UUID in " + packFile.getName());
+            }
+
+            try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(tempOutput))) {
+                List<PathKeyEntry> pathKeyList = new ArrayList<>();
+                for (PackFile file : files) {
+                    byte[] contents = file.contents();
+                    if (file.png() != null) {
+                        try {
+                            contents = file.png().get();
+                        } catch (ExecutionException e) {
+                            logger.warning("PNG kept as is, re-encoding failed: " + file.path());
+                        }
                     }
 
                     byte[] outputBytes;
-                    if (SKIP_ENCRYPTION.contains(leaf)) {
+                    if (SKIP_ENCRYPTION.contains(file.leaf())) {
                         outputBytes = contents;
                     } else {
-                        String fileKey = md5Hex(concat(relativePath.getBytes(StandardCharsets.UTF_8), contents));
+                        String fileKey = md5Hex(concat(file.path().getBytes(StandardCharsets.UTF_8), contents));
                         byte[] fileKeyBytes = fileKey.getBytes(StandardCharsets.UTF_8);
                         outputBytes = aes256Cfb8Encrypt(contents, fileKeyBytes, slice16(fileKeyBytes));
-                        pathKeyList.add(new PathKeyEntry(relativePath, fileKey));
+                        pathKeyList.add(new PathKeyEntry(file.path(), fileKey));
                     }
 
-                    writeZipEntry(output, relativePath, outputBytes);
-                }
-
-                if (packUuid == null || packUuid.length() != 36) {
-                    throw new IllegalArgumentException("manifest.json missing or invalid UUID in " + packFile.getName());
+                    writeZipEntry(output, file.path(), outputBytes);
                 }
 
                 String contentsJson = gson.toJson(new ContentsJson(pathKeyList));
@@ -200,6 +229,14 @@ public final class ResourcePackEncrypter {
         // Packs are re-encrypted at every startup: a fixed entry date keeps the output byte-identical,
         // so the SHA-256 doesn't move and clients don't re-download the whole pack after each restart.
         outEntry.setTimeLocal(FIXED_ENTRY_TIME);
+        // Stored, not deflated: encrypted bytes don't compress, deflating them only adds a few bytes
+        // per file (and a data descriptor), over thousands of files.
+        CRC32 crc = new CRC32();
+        crc.update(data);
+        outEntry.setMethod(ZipEntry.STORED);
+        outEntry.setSize(data.length);
+        outEntry.setCompressedSize(data.length);
+        outEntry.setCrc(crc.getValue());
         output.putNextEntry(outEntry);
         output.write(data);
         output.closeEntry();

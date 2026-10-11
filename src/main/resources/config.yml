@@ -13,3 +13,6 @@ excluded-packs: []
 # Strip indentation and comments from the JSON files of the encrypted packs.
 # Encrypted files no longer compress: without this, every indentation byte is downloaded.
 minify-json: true
+# Re-encode the PNG files of the encrypted packs in their smallest form, pixel for pixel identical.
+# Results are cached in cache/, only new or changed images are re-encoded at startup.
+optimize-png: true

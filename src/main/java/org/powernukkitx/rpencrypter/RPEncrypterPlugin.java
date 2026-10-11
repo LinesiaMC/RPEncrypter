@@ -2,8 +2,8 @@ package org.powernukkitx.rpencrypter;
 
 import org.powernukkitx.PowerNukkitX;
 import org.powernukkitx.plugin.PluginBase;
-import org.powernukkitx.scheduler.PluginTask;
 import org.powernukkitx.utils.Config;
+import org.powernukkitx.rpencrypter.utils.PngCache;
 import org.powernukkitx.rpencrypter.utils.ResourcePackEncrypter;
 
 import org.powernukkitx.resourcepacks.ResourcePack;
@@ -32,6 +32,7 @@ public final class RPEncrypterPlugin extends PluginBase {
     private String encryptionKey;
     private Set<String> excludedPacks;
     private boolean minifyJson;
+    private boolean optimizePng;
 
     @Override
     public void onLoad() {
@@ -45,8 +46,11 @@ public final class RPEncrypterPlugin extends PluginBase {
         this.encryptionKey = resolveEncryptionKey(this.getConfig());
         this.excludedPacks = resolveExcludedPacks(this.getConfig());
         this.minifyJson = this.getConfig().getBoolean("minify-json", true);
+        this.optimizePng = this.getConfig().getBoolean("optimize-png", true);
         if (this.getConfig().getBoolean("auto-encrypt-packs", true)) {
-            this.getServer().getScheduler().scheduleDelayedTask(new EncryptTask(this), 1);
+            // Right away, not on the first tick: plugins are enabled before the server opens its
+            // network, so no client can ever be handed the plain packs while they are encrypted.
+            this.encryptLoadedPacks();
         }
     }
 
@@ -114,12 +118,22 @@ public final class RPEncrypterPlugin extends PluginBase {
         File resourcePacksDir = new File(PowerNukkitX.DATA_PATH, "resource_packs");
         File outputDir = new File(this.getDataFolder(), "encrypted_packs");
 
+        long start = System.nanoTime();
         this.clearOutputDir(outputDir);
-        int updated = this.encrypter.encryptAllInDirectory(resourcePacksDir, outputDir, this.encryptionKey,
-                this.excludedPacks, this.minifyJson);
+        int updated;
+        // A quarter of the cores at most: the other servers of the machine keep running meanwhile.
+        int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 4));
+        try (PngCache pngCache = this.optimizePng ? new PngCache(new File(this.getDataFolder(), "cache/png-v1"), threads) : null) {
+            updated = this.encrypter.encryptAllInDirectory(resourcePacksDir, outputDir, this.encryptionKey,
+                    this.excludedPacks, this.minifyJson, pngCache);
+            if (pngCache != null) {
+                pngCache.prune();
+            }
+        }
 
         this.swapWithEncryptedPacks();
-        this.getLogger().debug("Encryption finished. Encrypted/updated packs: " + updated);
+        this.getLogger().info(String.format(Locale.ROOT, "%d pack(s) encrypted in %.1f s",
+                updated, (System.nanoTime() - start) / 1e9));
     }
 
     private void clearOutputDir(File dir) {
@@ -214,16 +228,5 @@ public final class RPEncrypterPlugin extends PluginBase {
             }
         }
         return byId;
-    }
-
-    private static final class EncryptTask extends PluginTask<RPEncrypterPlugin> {
-        private EncryptTask(RPEncrypterPlugin owner) {
-            super(owner);
-        }
-
-        @Override
-        public void onRun(int currentTick) {
-            this.getOwner().encryptLoadedPacks();
-        }
     }
 }

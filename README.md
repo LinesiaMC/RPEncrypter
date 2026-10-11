@@ -9,7 +9,8 @@ Resource pack encryptor for PowerNukkitX
 - You can put keys into config.yml
 - No effort for .key files
 - Any pack can be kept unencrypted through `excluded-packs`
-- JSON files are minified before encryption (encrypted bytes no longer compress)
+- JSON files are minified and PNG files re-encoded without loss before encryption (encrypted bytes no longer compress)
+- Packs are encrypted before the server opens its network: the plain packs are never served
 
 ---
 
@@ -25,6 +26,8 @@ excluded-packs:
   - MyPublicPack.zip
 # Strip indentation and comments from the JSON files of the encrypted packs.
 minify-json: true
+# Re-encode the PNG files of the encrypted packs in their smallest form, pixel for pixel identical.
+optimize-png: true
 ```
 
 ---
