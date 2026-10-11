@@ -51,26 +51,16 @@ public final class ResourcePackEncrypter {
      * @param minifyJson strip indentation and comments from the JSON files
      * @param pngCache   re-encodes the PNGs without loss, or {@code null} to keep them as they are
      */
-    public int encryptAllInDirectory(File sourceDirectory, File outputDirectory, String encryptionKey,
-                                     Set<String> excludedPacks, boolean minifyJson, PngCache pngCache) {
-        if (!sourceDirectory.isDirectory()) {
-            logger.warning("source directory not found: " + sourceDirectory.getAbsolutePath());
-            return 0;
-        }
-
+    public int encryptAll(List<File> packs, File outputDirectory, String encryptionKey,
+                          Set<String> excludedPacks, boolean minifyJson, PngCache pngCache) {
         if (!outputDirectory.exists()) {
             outputDirectory.mkdirs();
-        }
-
-        File[] files = sourceDirectory.listFiles();
-        if (files == null) {
-            return 0;
         }
 
         int updated = 0;
         jsonBytesBefore = 0;
         jsonBytesAfter = 0;
-        for (File file : files) {
+        for (File file : packs) {
             if (!file.isFile()) {
                 continue;
             }

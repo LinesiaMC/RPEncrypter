@@ -16,3 +16,12 @@ minify-json: true
 # Re-encode the PNG files of the encrypted packs in their smallest form, pixel for pixel identical.
 # Results are cached in cache/, only new or changed images are re-encoded at startup.
 optimize-png: true
+# Packs sent as one: each entry is the name of the pack to build and the packs of the
+# resource_packs folder it gathers (same names as excluded-packs). The client downloads and
+# loads one pack instead of all of them; the sources stay in resource_packs as they are.
+# Example:
+# merged-packs:
+#   MyEvents:
+#     - EventPackOne
+#     - EventPackTwo
+merged-packs: {}

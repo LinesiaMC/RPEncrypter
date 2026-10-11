@@ -11,6 +11,7 @@ Resource pack encryptor for PowerNukkitX
 - Any pack can be kept unencrypted through `excluded-packs`
 - JSON files are minified and PNG files re-encoded without loss before encryption (encrypted bytes no longer compress)
 - Packs are encrypted before the server opens its network: the plain packs are never served
+- Several packs can be sent as one (`merged-packs`): fewer packs for the client to download and load
 
 ---
 
@@ -28,6 +29,11 @@ excluded-packs:
 minify-json: true
 # Re-encode the PNG files of the encrypted packs in their smallest form, pixel for pixel identical.
 optimize-png: true
+# Packs sent as one: the merged pack's name, then the packs it gathers.
+merged-packs:
+  MyEvents:
+    - EventPackOne
+    - EventPackTwo
 ```
 
 ---
