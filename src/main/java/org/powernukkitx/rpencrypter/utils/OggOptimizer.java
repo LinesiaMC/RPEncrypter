@@ -19,9 +19,14 @@ import java.util.regex.Pattern;
  * effects of a pack are synthesised low and dull, yet encoded at 44.1 kHz like music. A sound whose
  * energy above 11 kHz is under a ten-thousandth of the total is re-encoded at 22.05 kHz (Vorbis
  * quality 4, a notch above the usual one, so that the second encoding costs nothing audible).
- * Everything else is returned as is: bright sounds, long ones, loops (named so, see
- * {@link #mayResample}: resampling could leave a click where they loop), sounds already at 22 kHz,
- * anything ffmpeg can't read, and any result that isn't smaller.
+ * Everything else keeps its sample rate: bright sounds, long ones, loops (named so, see
+ * {@link #mayResample}: resampling could leave a click where they loop). Sounds already at 22 kHz,
+ * anything ffmpeg can't read and any result that isn't smaller are returned as they are.
+ *
+ * With a quality (0 to 10, the one of {@code oggenc -q}), the sounds that keep their sample rate are
+ * re-encoded at that quality: this one is heard on a good headset, it is the choice of the server
+ * owner. Musics are the bulk of the bytes of a pack, and are often encoded far above what a game
+ * needs.
  */
 public final class OggOptimizer {
 
@@ -33,10 +38,13 @@ public final class OggOptimizer {
     private static final int FRAME = 4096;
 
     private final String ffmpeg;
+    private final int quality;
     private volatile boolean available = true;
 
-    public OggOptimizer(String ffmpeg) {
+    /** @param quality Vorbis quality of the sounds that keep their sample rate, or a negative number to leave them alone */
+    public OggOptimizer(String ffmpeg, int quality) {
         this.ffmpeg = ffmpeg;
+        this.quality = Math.min(quality, 10);
     }
 
     /** Loops and long sounds are never resampled: only the file name can tell a loop. */
@@ -49,30 +57,50 @@ public final class OggOptimizer {
         return available;
     }
 
-    /** The resampled sound, or the input itself. Never throws. */
+    /** The lighter sound (resampled if it is dull and short, else re-encoded at the quality), or the input itself. Never throws. */
     public byte[] optimize(byte[] ogg) {
+        return lighten(ogg, true);
+    }
+
+    /** For the loops: the sound re-encoded at the quality, never resampled, or the input itself. Never throws. */
+    public byte[] reencode(byte[] ogg) {
+        return lighten(ogg, false);
+    }
+
+    private byte[] lighten(byte[] ogg, boolean mayResample) {
         if (!available) return ogg;
         try {
             int[] info = vorbisInfo(ogg);
             if (info == null) return ogg;
             int channels = info[0], rate = info[1];
             if (rate <= 22050) return ogg;
+
             double seconds = lastGranule(ogg) / (double) rate;
-            if (seconds <= 0 || seconds > MAX_SECONDS) return ogg;
-
-            byte[] pcm = run(ogg, ffmpeg, "-v", "error", "-i", "pipe:0", "-ac", "1", "-f", "f32le", "pipe:1");
-            if (pcm == null || highRatio(pcm, rate) >= MAX_HIGH_RATIO) return ogg;
-
-            byte[] out = run(ogg, ffmpeg, "-v", "error", "-i", "pipe:0", "-map_metadata", "-1",
-                    "-ac", String.valueOf(channels), "-ar", "22050", "-c:a", "libvorbis", "-q:a", "4",
-                    "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg", "pipe:1");
-            return out != null && out.length > 0 && out.length < ogg.length && AssetCache.isCompleteOgg(out) ? out : ogg;
+            if (mayResample && seconds > 0 && seconds <= MAX_SECONDS) {
+                byte[] pcm = run(ogg, ffmpeg, "-v", "error", "-i", "pipe:0", "-ac", "1", "-f", "f32le", "pipe:1");
+                if (pcm != null && highRatio(pcm, rate) < MAX_HIGH_RATIO) {
+                    byte[] out = encode(ogg, channels, 22050, 4);
+                    return out != null && out.length < ogg.length ? out : ogg;
+                }
+            }
+            if (quality < 0) return ogg;
+            // A second lossy encoding is only worth a real gain: under a tenth, the sound stays as it is.
+            byte[] out = encode(ogg, channels, rate, quality);
+            return out != null && out.length < ogg.length * 0.9 ? out : ogg;
         } catch (IOException e) {
             available = false; // no ffmpeg: every sound stays as it is
             return ogg;
         } catch (RuntimeException | InterruptedException e) {
             return ogg;
         }
+    }
+
+    /** The sound re-encoded, byte for byte the same at every run, or null when ffmpeg fails. */
+    private byte[] encode(byte[] ogg, int channels, int rate, int q) throws IOException, InterruptedException {
+        byte[] out = run(ogg, ffmpeg, "-v", "error", "-i", "pipe:0", "-map_metadata", "-1",
+                "-ac", String.valueOf(channels), "-ar", String.valueOf(rate), "-c:a", "libvorbis", "-q:a", String.valueOf(q),
+                "-fflags", "+bitexact", "-flags:a", "+bitexact", "-f", "ogg", "pipe:1");
+        return out != null && out.length > 0 && AssetCache.isCompleteOgg(out) ? out : null;
     }
 
     /** Channels and sample rate, from the identification header of the first page. */

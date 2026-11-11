@@ -32,10 +32,22 @@ merged-packs: {}
 #   - server_assets/
 #   - README.md
 strip-paths: []
+# Paths kept in clear inside the encrypted packs (prefixes), still compressed. A client plays no
+# sound from a pack whose sounds are encrypted: list them here to keep such a pack encrypted.
+# Clients that already have a pack keep their copy until its version changes.
+# Example:
+# plain-paths:
+#   - sounds/
+#   - sounds.json
+plain-paths: []
 # Re-encode at 22.05 kHz the sounds of the packs that have nothing above 11 kHz (same sound to the
 # ear, far fewer bytes). Needs ffmpeg with libvorbis; loops and sounds over 10 s are left alone.
 optimize-ogg: false
 ffmpeg: ffmpeg
+# With optimize-ogg: also re-encode at this Vorbis quality (0 to 10) the sounds that keep their
+# sample rate, musics and loops included. Heard on a good headset under 3 or so; -1 = never.
+# Musics are the bulk of a pack: a mono music at quality 5 loses about a third of its bytes at 2.
+ogg-quality: -1
 # Also lighten the excluded packs (minified JSON, re-encoded PNG and sounds), still sent in clear.
 optimize-excluded-packs: false
 # Shrink the JSON UI files of the encrypted packs with the game's own templates and variables:

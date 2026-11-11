@@ -13,7 +13,9 @@ Resource pack encryptor for PowerNukkitX
 - Packs are encrypted before the server opens its network: the plain packs are never served
 - Several packs can be sent as one (`merged-packs`): fewer packs for the client to download and load
 - Files the game never reads can be left out of the encrypted packs (`strip-paths`)
+- Chosen paths stay in clear inside an encrypted pack (`plain-paths`): a client plays no sound from encrypted sound files
 - Dull sounds re-encoded at 22.05 kHz with ffmpeg (`optimize-ogg`), excluded packs lightened too (`optimize-excluded-packs`)
+- Musics and other sounds re-encoded at a chosen Vorbis quality (`ogg-quality`): lossy, off by default
 - JSON UI files factored into templates and variables (`compress-ui`), checked by expanding them back
 
 ---
@@ -34,6 +36,8 @@ minify-json: true
 optimize-png: true
 # Re-encode at 22.05 kHz the sounds with nothing above 11 kHz (needs ffmpeg with libvorbis).
 optimize-ogg: true
+# Also re-encode the other sounds, musics and loops included, at this Vorbis quality (lossy; -1 = never).
+ogg-quality: -1
 # Also lighten the excluded packs, still sent in clear.
 optimize-excluded-packs: true
 # Factor the JSON UI files into templates and variables.
@@ -41,6 +45,10 @@ compress-ui: true
 # Paths left out of the encrypted packs (prefixes), for files the game never reads.
 strip-paths:
   - server_assets/
+# Paths kept in clear inside the encrypted packs (prefixes): encrypted sounds are never played.
+plain-paths:
+  - sounds/
+  - sounds.json
 # Packs sent as one: the merged pack's name, then the packs it gathers.
 merged-packs:
   MyEvents:

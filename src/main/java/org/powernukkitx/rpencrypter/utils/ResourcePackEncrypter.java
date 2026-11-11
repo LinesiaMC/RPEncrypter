@@ -37,6 +37,7 @@ public final class ResourcePackEncrypter {
 
     private final PluginLogger logger;
     private List<String> stripPaths = List.of();
+    private List<String> plainPaths = List.of();
     private boolean compressUi;
     private long uiBytesBefore;
     private long uiBytesAfter;
@@ -54,6 +55,23 @@ public final class ResourcePackEncrypter {
      */
     public void setStripPaths(List<String> stripPaths) {
         this.stripPaths = List.copyOf(stripPaths);
+    }
+
+    /**
+     * Path prefixes kept in clear inside an encrypted pack: written deflated, and listed in
+     * contents.json without a key, the way the game lists the files of its own packs. Sounds belong
+     * here: a client plays none of the sounds of a pack whose sound_definitions.json and .ogg files
+     * are encrypted. So does anything worth more compressed than hidden: clear text still deflates.
+     */
+    public void setPlainPaths(List<String> plainPaths) {
+        this.plainPaths = List.copyOf(plainPaths);
+    }
+
+    private boolean isPlain(String path) {
+        for (String prefix : plainPaths) {
+            if (path.startsWith(prefix)) return true;
+        }
+        return false;
     }
 
     /** Shrink the JSON UI files with templates and variables before encrypting them ({@link JsonUiCompressor}). */
@@ -82,10 +100,12 @@ public final class ResourcePackEncrypter {
      * @param optimizeExcluded also rebuild the excluded packs lighter, sent in clear
      * @param minifyJson       strip indentation and comments from the JSON files
      * @param pngCache         re-encodes the PNGs without loss, or {@code null} to keep them as they are
-     * @param oggCache         resamples the dull sounds, or {@code null} to keep them as they are
+     * @param oggCache         lightens the sounds, or {@code null} to keep them as they are
+     * @param loopOggCache     lightens the loops and musics without resampling them, or {@code null}
      */
     public int encryptAll(List<File> packs, File outputDirectory, String encryptionKey, Set<String> excludedPacks,
-                          boolean optimizeExcluded, boolean minifyJson, AssetCache pngCache, AssetCache oggCache) {
+                          boolean optimizeExcluded, boolean minifyJson, AssetCache pngCache, AssetCache oggCache,
+                          AssetCache loopOggCache) {
         if (!outputDirectory.exists()) {
             outputDirectory.mkdirs();
         }
@@ -115,7 +135,7 @@ public final class ResourcePackEncrypter {
             File outputFile = new File(outputDirectory, file.getName());
 
             try {
-                if (encryptPack(file, outputFile, excluded ? null : encryptionKey, minifyJson, pngCache, oggCache)) {
+                if (encryptPack(file, outputFile, excluded ? null : encryptionKey, minifyJson, pngCache, oggCache, loopOggCache)) {
                     if (excluded) {
                         logger.info("Pack excluded from encryption, sent in clear once lightened: " + file.getName());
                     } else {
@@ -131,7 +151,7 @@ public final class ResourcePackEncrypter {
             logger.info(String.format(Locale.ROOT, "JSON minified before encryption: %.1f MB -> %.1f MB",
                     jsonBytesBefore / 1e6, jsonBytesAfter / 1e6));
         }
-        for (AssetCache cache : new AssetCache[]{pngCache, oggCache}) {
+        for (AssetCache cache : new AssetCache[]{pngCache, oggCache, loopOggCache}) {
             if (cache != null && !cache.isEmpty()) {
                 logger.info(cache.summary());
             }
@@ -156,7 +176,7 @@ public final class ResourcePackEncrypter {
 
     /** {@code encryptionKey} null: the pack is only lightened, and written in clear. */
     private boolean encryptPack(File packFile, File outputFile, String encryptionKey, boolean minifyJson,
-                                AssetCache pngCache, AssetCache oggCache) throws Exception {
+                                AssetCache pngCache, AssetCache oggCache, AssetCache loopOggCache) throws Exception {
         Path tempOutput = Files.createTempFile("rpencrypter-pnx-", ".zip");
         try {
             boolean encrypt = encryptionKey != null;
@@ -203,8 +223,9 @@ public final class ResourcePackEncrypter {
                         }
                     } else if (pngCache != null && lowerLeaf.endsWith(".png")) {
                         optimized = pngCache.submit(contents);
-                    } else if (oggCache != null && lowerLeaf.endsWith(".ogg") && OggOptimizer.mayResample(relativePath)) {
-                        optimized = oggCache.submit(contents);
+                    } else if (lowerLeaf.endsWith(".ogg")) {
+                        AssetCache cache = OggOptimizer.mayResample(relativePath) ? oggCache : loopOggCache;
+                        if (cache != null) optimized = cache.submit(contents);
                     }
                     files.add(new PackFile(relativePath, leaf, contents, optimized));
                 }
@@ -228,6 +249,11 @@ public final class ResourcePackEncrypter {
 
                     if (!encrypt) {
                         writeDeflatedEntry(output, file.path(), contents);
+                        continue;
+                    }
+                    if (isPlain(file.path())) {
+                        writeDeflatedEntry(output, file.path(), contents);
+                        pathKeyList.add(new PathKeyEntry(file.path(), null)); // no key: read as it is
                         continue;
                     }
                     byte[] outputBytes;

@@ -41,6 +41,7 @@ public final class RPEncrypterPlugin extends PluginBase {
     private boolean minifyJson;
     private boolean optimizePng;
     private boolean optimizeOgg;
+    private int oggQuality;
     private boolean optimizeExcluded;
     private String ffmpeg;
     private Map<String, List<String>> mergedPacks;
@@ -58,9 +59,11 @@ public final class RPEncrypterPlugin extends PluginBase {
         this.excludedPacks = resolveExcludedPacks(this.getConfig());
         this.minifyJson = this.getConfig().getBoolean("minify-json", true);
         this.encrypter.setStripPaths(this.getConfig().getStringList("strip-paths"));
+        this.encrypter.setPlainPaths(this.getConfig().getStringList("plain-paths"));
         this.encrypter.setCompressUi(this.getConfig().getBoolean("compress-ui", false));
         this.optimizePng = this.getConfig().getBoolean("optimize-png", true);
         this.optimizeOgg = this.getConfig().getBoolean("optimize-ogg", false);
+        this.oggQuality = this.getConfig().getInt("ogg-quality", -1);
         this.ffmpeg = this.getConfig().getString("ffmpeg", "ffmpeg");
         this.optimizeExcluded = this.getConfig().getBoolean("optimize-excluded-packs", false);
         this.mergedPacks = resolveMergedPacks(this.getConfig());
@@ -178,16 +181,24 @@ public final class RPEncrypterPlugin extends PluginBase {
         int updated;
         // A quarter of the cores at most: the other servers of the machine keep running meanwhile.
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 4));
-        OggOptimizer oggOptimizer = new OggOptimizer(this.ffmpeg);
+        OggOptimizer oggOptimizer = new OggOptimizer(this.ffmpeg, this.oggQuality);
         File cache = new File(this.getDataFolder(), "cache");
+        // One cache per quality: a result made at another quality must never be served for this one.
+        boolean lossy = this.optimizeOgg && this.oggQuality >= 0;
+        String oggDir = lossy ? "ogg-q" + Math.min(this.oggQuality, 10) + "-v1" : "ogg-v1";
         try (AssetCache pngCache = this.optimizePng ? new AssetCache(new File(cache, "png-v1"), threads, "PNG", ".png",
                      PngOptimizer::optimize, AssetCache::isCompletePng) : null;
-             AssetCache oggCache = this.optimizeOgg ? new AssetCache(new File(cache, "ogg-v1"), threads, "OGG", ".ogg",
-                     oggOptimizer::optimize, AssetCache::isCompleteOgg) : null) {
+             AssetCache oggCache = this.optimizeOgg ? new AssetCache(new File(cache, oggDir), threads, "OGG", ".ogg",
+                     oggOptimizer::optimize, AssetCache::isCompleteOgg) : null;
+             AssetCache loopOggCache = lossy ? new AssetCache(new File(cache, "ogg-loops-q" + Math.min(this.oggQuality, 10) + "-v1"),
+                     threads, "OGG-loops", ".ogg", oggOptimizer::reencode, AssetCache::isCompleteOgg) : null) {
             updated = this.encrypter.encryptAll(packs, outputDir, this.encryptionKey, this.excludedPacks,
-                    this.optimizeExcluded, this.minifyJson, pngCache, oggCache);
+                    this.optimizeExcluded, this.minifyJson, pngCache, oggCache, loopOggCache);
             if (pngCache != null) pngCache.prune();
-            if (oggCache != null && oggOptimizer.isAvailable()) oggCache.prune();
+            if (oggOptimizer.isAvailable()) {
+                if (oggCache != null) oggCache.prune();
+                if (loopOggCache != null) loopOggCache.prune();
+            }
         }
         if (this.optimizeOgg && !oggOptimizer.isAvailable()) {
             this.getLogger().warning("optimize-ogg: ffmpeg not found (" + this.ffmpeg + "), sounds left as they are");
